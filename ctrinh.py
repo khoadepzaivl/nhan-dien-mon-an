@@ -14,6 +14,120 @@ import qrcode
 import os
 import pandas as pd
 from datetime import datetime
+import serial
+import serial.tools.list_ports
+import torch
+from torchvision import transforms
+import torch
+from yolov5.models.common import DetectMultiBackend
+from yolov5.utils.general import non_max_suppression
+from yolov5.utils.augmentations import letterbox
+
+class YOLOModel:
+    def __init__(self, weights_path, device='cpu'):
+        self.device = device
+        self.model = DetectMultiBackend(weights_path, device=device)
+        self.stride = self.model.stride
+        
+    def detect(self, image, conf_thres=0.7, iou_thres=0.45):
+        # Tiền xử lý ảnh
+        img = letterbox(image, 640, stride=self.stride)[0]
+        img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+        img = np.ascontiguousarray(img)
+        
+        # Chuẩn hóa ảnh
+        img = torch.from_numpy(img).to(self.device)
+        img = img.float() / 255.0
+        
+        # Inference
+        if len(img.shape) == 3:
+            img = img[None]  # expand for batch dim
+            
+        pred = self.model(img)
+        pred = non_max_suppression(pred, conf_thres, iou_thres)
+        
+        # Xử lý kết quả
+        detections = []
+        for det in pred:
+            if len(det):
+                for *xyxy, conf, cls in reversed(det):
+                    detections.append({
+                        'bbox': [int(x) for x in xyxy],
+                        'confidence': float(conf),
+                        'class_id': int(cls)
+                    })
+        return detections
+def update_frame():
+    global current_frame, should_capture, current_detections, processing_confirmation
+    
+    while is_running:
+        # Kiểm tra tín hiệu từ Arduino
+        if arduino_connected and arduino_serial.in_waiting > 0:
+            data = arduino_serial.readline().decode('utf-8').strip()
+            if data == "CONFIRM" and not processing_confirmation:
+                processing_confirmation = True
+                root.after(0, process_confirmation)
+        
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Chỉ nhận diện khi có tín hiệu xác nhận
+        if should_capture:
+            detections = recognize_food_with_yolo(frame)
+            
+            # Vẽ bounding box và nhãn
+            for det in detections:
+                x1, y1, x2, y2 = det['bbox']
+                label = f"{det['food_name']} {det['confidence']:.1f}%"
+                
+                # Vẽ bounding box
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, label, (x1, y1 - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                
+                current_detections.append(det['food_name'])
+        
+        current_frame = frame
+        update_gui()
+        
+        if cv2.waitKey(1) == 27:
+            break
+
+# Khởi tạo model YOLO
+try:
+    yolo_model = YOLOModel('C:/Users/ACER/Downloads/bai tiep nha/mon an/best.pt', device='cuda' if torch.cuda.is_available() else 'cpu')
+    print("YOLO model loaded successfully!")
+except Exception as e:
+    print(f"Error loading YOLO model: {e}")
+    exit()
+
+def recognize_food_with_yolo(image):
+    """Kết hợp cả YOLO và model hiện tại để nhận diện chính xác hơn"""
+    # Nhận diện bằng YOLO trước
+    yolo_detections = yolo_model.detect(image)
+    
+    final_detections = []
+    for det in yolo_detections:
+        x1, y1, x2, y2 = det['bbox']
+        food_roi = image[y1:y2, x1:x2]
+        
+        # Sử dụng model hiện tại để phân loại món ăn
+        img_input = preprocess_image(food_roi)
+        color_input = extract_color_features(food_roi)
+        preds = model.predict([img_input, color_input], verbose=0)
+        idx = np.argmax(preds)
+        confidence = np.max(preds) * 0.7 + det['confidence'] * 0.3  # Kết hợp confidence
+        
+        food_names = list(FOOD_DATA.keys())
+        if 0 <= idx < len(food_names) and confidence > 65:  # Ngưỡng confidence cao hơn
+            final_detections.append({
+                'food_name': food_names[idx],
+                'confidence': confidence,
+                'bbox': det['bbox']
+            })
+    
+    return final_detections
 
 # 1. Fix lỗi DepthwiseConv2D
 class FixedDepthwiseConv2D(DepthwiseConv2D):
@@ -21,7 +135,6 @@ class FixedDepthwiseConv2D(DepthwiseConv2D):
         kwargs.pop('groups', None)
         super().__init__(*args, **kwargs)
 
-# 2. Danh sách món ăn với giá cả và dinh dưỡng
 # 2. Danh sách món ăn với giá cả và dinh dưỡng
 FOOD_DATA = {
     "Ca hu kho": {"price": 15000, "calories": 124, "protein": 24},
@@ -47,14 +160,16 @@ QR_INFO = {
 
 # Biến toàn cục
 cap = None
-is_running = False
+is_running = True  # Mặc định bật camera khi khởi động
 current_frame = None
 detected_foods = defaultdict(int)
 current_detections = []
-reset_flag = False
-last_reset_time = 0
 qr_image = None
 all_bills_history = []
+arduino_serial = None
+arduino_connected = False
+should_capture = False
+processing_confirmation = False
 
 # 3. Load model
 try:
@@ -117,59 +232,68 @@ def recognize_food(image):
     except Exception as e:
         print(f"{e}")
         return None, 0
-detected_boxes = []
+
+def connect_arduino():
+    """Tự động kết nối với Arduino nếu có"""
+    global arduino_serial, arduino_connected
+    
+    # Tìm cổng COM của Arduino
+    ports = serial.tools.list_ports.comports()
+    arduino_port = None
+    for port in ports:
+        if 'Arduino' in port.description or 'USB Serial Device' in port.description:
+            arduino_port = port.device
+            break
+    
+    if arduino_port is None:
+        print("Không tìm thấy Arduino, chỉ sử dụng nút xác nhận trên giao diện")
+        return False
+    
+    try:
+        arduino_serial = serial.Serial(arduino_port, 9600, timeout=1)
+        time.sleep(2)  # Chờ kết nối ổn định
+        arduino_connected = True
+        print(f"Đã kết nối với Arduino tại {arduino_port}")
+        return True
+    except Exception as e:
+        print(f"Không thể kết nối Arduino: {e}, chỉ sử dụng nút xác nhận trên giao diện")
+        return False
+
 def start_camera():
-    """Bắt đầu quá trình nhận diện từ camera"""
-    global cap, is_running, current_frame, current_detections, reset_flag, last_reset_time
+    """Khởi động camera ngay khi chương trình bắt đầu"""
+    global cap, current_frame
     
-    if is_running:
-        return
-    
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     if not cap.isOpened():
         messagebox.showerror("Lỗi", "Không thể mở camera!")
         return
     
-    is_running = True
+    # Thử kết nối Arduino
+    connect_arduino()
     
     def update_frame():
-        global current_frame, current_detections, reset_flag, last_reset_time, detected_boxes
+        global current_frame, should_capture, current_detections, processing_confirmation
         
         while is_running:
+            # Kiểm tra tín hiệu từ Arduino nếu có kết nối
+            if arduino_connected and arduino_serial.in_waiting > 0:
+                data = arduino_serial.readline().decode('utf-8').strip()
+                if data == "CONFIRM" and not processing_confirmation:
+                    processing_confirmation = True
+                    root.after(0, process_confirmation)
+            
             ret, frame = cap.read()
             if not ret:
                 break
             
-            if reset_flag:
-                if time.time() - last_reset_time > 10:
-                    reset_flag = False
-                    current_detections = []
-                    detected_boxes = []
-                else:
-                    remaining = 10 - int(time.time() - last_reset_time)
-                    cv2.putText(frame, f"Dang reset... {remaining}s", (10, 30), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    current_frame = frame
-                    update_gui()
-                    continue
-            
-            food_name, confidence = recognize_food(frame)
-            if food_name and confidence > 70:
-                # Xác định vị trí khung (giả lập - thực tế cần detect từ model)
-                h, w = frame.shape[:2]
-                box_x1, box_y1 = 50, 50
-                box_x2, box_y2 = w-50, h-50
-                
-                # Kiểm tra xem có khung trùng lặp không
-                is_new_box = True
-                for box in detected_boxes:
-                    # Kiểm tra overlap giữa các khung
-                    if abs(box[1] - box_x1) < 50 and abs(box[2] - box_y1) < 50:
-                        is_new_box = False
-                        break
-                
-                if is_new_box:
-                    detected_boxes.append((food_name, box_x1, box_y1, box_x2, box_y2))
+            # Chỉ nhận diện khi có tín hiệu xác nhận
+            if should_capture:
+                food_name, confidence = recognize_food(frame)
+                if food_name and confidence > 70:
+                    h, w = frame.shape[:2]
+                    box_x1, box_y1 = 50, 50
+                    box_x2, box_y2 = w-50, h-50
+                    
                     current_detections.append(food_name)
                     cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), (0, 255, 0), 2)
                     cv2.putText(frame, food_name, (box_x1, box_y1 - 10), 
@@ -177,13 +301,13 @@ def start_camera():
             
             current_frame = frame
             update_gui()
-            update_detected_list()
             
             if cv2.waitKey(1) == 27:
                 break
     
     camera_thread = threading.Thread(target=update_frame, daemon=True)
     camera_thread.start()
+
 def update_gui():
     """Cập nhật hình ảnh camera lên giao diện"""
     if current_frame is None:
@@ -206,36 +330,37 @@ def update_detected_list():
         price = FOOD_DATA[food]["price"]
         detected_list.insert(tk.END, f"{food} x{count}: {price:,}VND")
 
+def process_confirmation():
+    """Xử lý khi có xác nhận từ nút vật lý hoặc phần mềm"""
+    global should_capture, processing_confirmation, current_detections
+    
+    should_capture = True
+    current_detections = []  # Reset danh sách nhận diện
+    
+    # Chờ 1 giây để camera có đủ thời gian nhận diện
+    time.sleep(1)
+    
+    should_capture = False
+    processing_confirmation = False
+    
+    # Cập nhật danh sách và tạo hóa đơn
+    update_detected_list()
+    generate_bill()
 
-def generate_qr_code(total_amount):
-    """Tạo mã QR chứa thông tin thanh toán"""
-    global qr_image
+def generate_bill():
+    """Tạo hóa đơn thanh toán với các món đã nhận diện"""
+    global detected_foods
     
-    qr_content = f"bank://{QR_INFO['bank']}?account={QR_INFO['account']}&name={QR_INFO['name']}&amount={total_amount}&note={QR_INFO['note']}"
+    if not current_detections:
+        messagebox.showwarning("Cảnh báo", "Chưa có món ăn nào được nhận diện!")
+        return
     
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=10,
-        border=4,
-    )
-    qr.add_data(qr_content)
-    qr.make(fit=True)
+    # Cập nhật số lượng món ăn đã nhận diện
+    detected_foods.clear()
+    for food in current_detections:
+        detected_foods[food] += 1
     
-    qr_img = qr.make_image(fill_color="black", back_color="white")
-    qr_img = qr_img.resize((200, 200))
-    
-    draw = ImageDraw.Draw(qr_img)
-    try:
-        font = ImageFont.truetype("arial.ttf", 12)
-    except:
-        font = ImageFont.load_default()
-    
-    draw.text((10, 180), f"STK: {QR_INFO['account']}", font=font, fill="black")
-    draw.text((10, 195), f"Ngân hàng: {QR_INFO['bank']}", font=font, fill="black")
-    
-    qr_image = ImageTk.PhotoImage(qr_img)
-    return qr_img
+    update_bill()
 
 def update_bill():
     """Cập nhật hóa đơn thanh toán và QR code"""
@@ -294,11 +419,66 @@ def update_bill():
         payment_info = f"Chuyển khoản đến:\n{QR_INFO['name']}\n{QR_INFO['bank']}\nSTK: {QR_INFO['account']}"
         payment_label.config(text=payment_info)
 
+def generate_qr_code(total_amount):
+    """Tạo mã QR chứa thông tin thanh toán"""
+    global qr_image
+    
+    qr_content = f"bank://{QR_INFO['bank']}?account={QR_INFO['account']}&name={QR_INFO['name']}&amount={total_amount}&note={QR_INFO['note']}"
+    
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(qr_content)
+    qr.make(fit=True)
+    
+    qr_img = qr.make_image(fill_color="black", back_color="white")
+    qr_img = qr_img.resize((200, 200))
+    
+    draw = ImageDraw.Draw(qr_img)
+    try:
+        font = ImageFont.truetype("arial.ttf", 12)
+    except:
+        font = ImageFont.load_default()
+    
+    draw.text((10, 180), f"STK: {QR_INFO['account']}", font=font, fill="black")
+    draw.text((10, 195), f"Ngân hàng: {QR_INFO['bank']}", font=font, fill="black")
+    
+    qr_image = ImageTk.PhotoImage(qr_img)
+    return qr_img
+
+def clear_all():
+    """Xóa tất cả thông tin"""
+    global detected_foods, current_detections, qr_image, should_capture
+    detected_foods.clear()
+    current_detections = []
+    qr_image = None
+    should_capture = False
+    update_detected_list()
+    bill_label.config(text=" HÓA ĐƠN \n\nChưa có thông tin")
+    qr_label.config(image=None)
+    payment_label.config(text="")
+
+def on_closing():
+    """Xử lý khi đóng cửa sổ"""
+    global is_running, cap, arduino_serial
+    is_running = False
+    if cap is not None:
+        cap.release()
+    if arduino_serial is not None:
+        arduino_serial.close()
+    
+    export_to_excel()
+    root.destroy()
+
 def export_to_excel():
     """Xuất dữ liệu ra file Excel"""
     if not all_bills_history:
         print("Không có dữ liệu để xuất Excel")
         return
+    
     current_dir = os.path.dirname(os.path.abspath(__file__))
     data = []
     for bill in all_bills_history:
@@ -308,24 +488,18 @@ def export_to_excel():
                 "Số lượng": item["Số lượng"],
                 "Đơn giá": item["Đơn giá"],
                 "Thành tiền": item["Thành tiền"],
-                "Calories": item["Calories"],
-                "Protein": item["Protein"]
             })
     
     df = pd.DataFrame(data)
-    
     totals = {
         "Món ăn": "TỔNG CỘNG",
         "Số lượng": "",
         "Đơn giá": "",
         "Thành tiền": all_bills_history[-1]["Tổng cộng"],
-        "Calories": all_bills_history[-1]["Tổng Calories"],
-        "Protein": all_bills_history[-1]["Tổng Protein"]
     }
     df = pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
-    
     now = datetime.now()
-    filename =os.path.join(current_dir, f"ket ca_{now.hour}h_{now.minute}_{now.day}_{now.month}_{now.year}.xlsx")
+    filename = os.path.join(current_dir, f"hoa_don_{now.day}_{now.month}_{now.year}_{now.hour}h{now.minute}.xlsx")
     
     try:
         df.to_excel(filename, index=False)
@@ -333,91 +507,9 @@ def export_to_excel():
     except Exception as e:
         print(f"Lỗi khi xuất file Excel: {e}")
 
-def reset_detection():
-    """Reset nhận diện cho phần cơm mới"""
-    global reset_flag, last_reset_time, current_detections, detected_foods
-    reset_flag = True
-    last_reset_time = time.time()
-    current_detections = []
-    detected_foods.clear()
-    update_detected_list()
-    bill_label.config(text=" HÓA ĐƠN \n\nChưa có thông tin")
-    qr_label.config(image=None)
-    payment_label.config(text="")
-    messagebox.showinfo("Thông báo", "Đang reset cho phần cơm mới. Vui lòng đợi 10 giây.")
-
-def generate_bill():
-    """Tạo hóa đơn thanh toán"""
-    global detected_foods
-    
-    if not current_detections:
-        messagebox.showwarning("Cảnh báo", "Chưa có món ăn nào được nhận diện!")
-        return
-    
-    # Tự động đếm số lượng theo vị trí khung
-    from collections import Counter
-    detected_foods = Counter(current_detections)
-    update_bill()
-    # Cho phép nhập số lượng thủ công cho các món trùng
-    popup = tk.Toplevel()
-    popup.title("Nhập số lượng")
-    
-    tk.Label(popup, text="Nhập số lượng cho từng món:").pack()
-    
-    quantity_entries = {}
-    for food in set(current_detections):  # Sử dụng set để lấy món duy nhất
-        frame = tk.Frame(popup)
-        frame.pack(pady=5)
-        tk.Label(frame, text=f"{food}:").pack(side=tk.LEFT)
-        quantity_entries[food] = tk.Entry(frame)
-        quantity_entries[food].pack(side=tk.LEFT)
-        quantity_entries[food].insert(0, str(current_detections.count(food)))  # Đếm số lần xuất hiện
-    
-    def confirm_quantities():
-        detected_foods.clear()
-        for food, entry in quantity_entries.items():
-            try:
-                quantity = int(entry.get())
-                detected_foods[food] = quantity
-            except ValueError:
-                detected_foods[food] = 1
-        popup.destroy()
-        update_bill()
-    
-    tk.Button(popup, text="Xác nhận", command=confirm_quantities).pack(pady=10)
-def clear_all():
-    """Xóa tất cả thông tin"""
-    global detected_foods, current_detections, qr_image
-    detected_foods.clear()
-    current_detections = []
-    qr_image = None
-    update_detected_list()
-    bill_label.config(text=" HÓA ĐƠN \n\nChưa có thông tin")
-    qr_label.config(image=None)
-    payment_label.config(text="")
-
-def start_recognition():
-    """Bắt đầu nhận diện trong thread riêng"""
-    global is_running
-    if not is_running:
-        start_camera()
-        start_btn.config(state=tk.DISABLED)
-    else:
-        messagebox.showinfo("Thông báo", "Hệ thống đang chạy")
-
-def on_closing():
-    """Xử lý khi đóng cửa sổ"""
-    global is_running, cap
-    is_running = False
-    if cap is not None:
-        cap.release()
-    
-    export_to_excel()
-    root.destroy()
-
 # Tạo giao diện
 root = tk.Tk()
-root.title("Hệ Thống Nhận Diện Món Ăn với Dinh Dưỡng")
+root.title("Hệ Thống Nhận Diện Món Ăn Tích Hợp Arduino")
 root.geometry("1200x800")
 
 # Frame chứa camera và danh sách món ăn
@@ -432,30 +524,9 @@ camera_panel.pack(pady=5)
 detected_list = tk.Listbox(left_frame, height=10, font=("Arial", 12))
 detected_list.pack(fill=tk.BOTH, expand=True, pady=5)
 
-# Frame chứa nút điều khiển
+# Frame chứa nút điều khiển (chỉ còn 2 nút)
 button_frame = tk.Frame(left_frame)
 button_frame.pack(pady=10)
-
-start_btn = tk.Button(button_frame, text="Bắt Đầu", 
-                     command=start_recognition,
-                     font=("Arial", 12), 
-                     bg="green", fg="white",
-                     width=15)
-start_btn.pack(side=tk.LEFT, padx=5)
-
-reset_btn = tk.Button(button_frame, text="Thay Đổi Phần Cơm",
-                    command=reset_detection,
-                    font=("Arial", 12),
-                    bg="orange", fg="white",
-                    width=15)
-reset_btn.pack(side=tk.LEFT, padx=5)
-
-bill_btn = tk.Button(button_frame, text="Xuất Hóa Đơn",
-                    command=generate_bill,
-                    font=("Arial", 12),
-                    bg="blue", fg="white",
-                    width=15)
-bill_btn.pack(side=tk.LEFT, padx=5)
 
 clear_btn = tk.Button(button_frame, text="Xóa Tất Cả",
                      command=clear_all,
@@ -463,6 +534,13 @@ clear_btn = tk.Button(button_frame, text="Xóa Tất Cả",
                      bg="red", fg="white",
                      width=15)
 clear_btn.pack(side=tk.LEFT, padx=5)
+
+confirm_btn = tk.Button(button_frame, text="Xác Nhận",
+                       command=process_confirmation,
+                       font=("Arial", 12),
+                       bg="blue", fg="white",
+                       width=15)
+confirm_btn.pack(side=tk.LEFT, padx=5)
 
 # Frame hiển thị hóa đơn và QR
 right_frame = tk.Frame(root, width=700, height=700, bg="white", bd=2, relief=tk.SUNKEN)
@@ -486,6 +564,8 @@ qr_label.pack()
 payment_label = tk.Label(qr_frame, text="", font=("Arial", 12), bg="white")
 payment_label.pack(pady=10)
 
-# Xử lý sự kiện đóng cửa sổ
+# Khởi động camera ngay khi chương trình bắt đầu
+start_camera()
+
 root.protocol("WM_DELETE_WINDOW", on_closing)
 root.mainloop()
