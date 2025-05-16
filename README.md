@@ -62,7 +62,7 @@
     Đảm bảo rằng đường dẫn đến file weights YOLO (`best.pt`) trong code của bạn là chính xác.
 
 ### Lưu Ý Quan Trọng
-
+    Sử dụng ctrinh.py để chạy
 -   Đảm bảo bạn đang sử dụng **Python 3.10.
 -   Đối với các thư viện liên quan đến GPU (`tensorflow-gpu`, `torch` với CUDA), hãy chắc chắn rằng bạn đã cài đặt driver card đồ họa, CUDA và cuDNN tương thích.
 -   Nếu gặp vấn đề với `tkinter` trên Linux, hãy sử dụng các lệnh cài đặt hệ thống (`apt-get`, `yum`).
