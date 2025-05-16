@@ -14,7 +14,12 @@ import qrcode
 import os
 import pandas as pd
 from datetime import datetime
-import serial
+try:
+    import serial
+    import serial.tools.list_ports
+    ARDUINO_ENABLED = True
+except ImportError:
+    ARDUINO_ENABLED = False
 import serial.tools.list_ports
 import torch
 from torchvision import transforms
