@@ -68,5 +68,6 @@
 -   Nếu gặp vấn đề với `tkinter` trên Linux, hãy sử dụng các lệnh cài đặt hệ thống (`apt-get`, `yum`).
 -   Đảm bảo tất cả các model về máy, khi chạy đoạn code hãy thay đúng đường dẫn model tải ở máy vào các dòng load model
 -   Khi kết nối adruino và nút ấn bật lí, nhớ kiểm tra dây COM và nối dây theo hướng dẫn của đoạn code
+-   Có thể tăng cường dữ liệu và train thêm nếu muốn vì đã có sẵn 1 phần dataset
 
 Sau khi cài đặt đầy đủ các thư viện này, bạn có thể chạy đoạn code được cung cấp.
