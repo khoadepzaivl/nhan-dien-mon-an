@@ -66,7 +66,8 @@ Code đặt cam mặc định là 1 nên phải kết nối camera mới chạy 
     Đảm bảo rằng đường dẫn đến file weights YOLO (`best.pt`) trong code của bạn là chính xác.
 
 ### Lưu Ý Quan Trọng
-    Sử dụng ctrinh.py để chạy
+-    Sử dụng main.py để chạy
+-    Có thể điều chỉnh giá tiền ở biến FOOD DATA dòng 144
 -   Đảm bảo bạn đang sử dụng **Python 3.10.
 -   Đối với các thư viện liên quan đến GPU (`tensorflow-gpu`, `torch` với CUDA), hãy chắc chắn rằng bạn đã cài đặt driver card đồ họa, CUDA và cuDNN tương thích.
 -   Nếu gặp vấn đề với `tkinter` trên Linux, hãy sử dụng các lệnh cài đặt hệ thống (`apt-get`, `yum`).
