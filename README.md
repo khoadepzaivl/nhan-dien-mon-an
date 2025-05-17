@@ -1,9 +1,9 @@
-Download file exe tại đây:
+Download file exe chạy luôn tại đây:
 [![Download](https://img.shields.io/badge/Download-FoodDetector.exe-blue)](https://drive.google.com/uc?export=download&id=1bTljIaSiH-cBdLTIwrb38D2lkTEJELY4) 
 
 ## Các Thư Viện Cần Cài Đặt
 
-Để chạy đoạn code này, bạn cần cài đặt các thư viện Python sau. Bạn có thể sử dụng `pip` để cài đặt hầu hết các thư viện này.
+Để chạy đoạn code main.py, bạn cần cài đặt các thư viện Python sau. Bạn có thể sử dụng `pip` để cài đặt hầu hết các thư viện này.
 
 ### Thư Viện Chính
 
