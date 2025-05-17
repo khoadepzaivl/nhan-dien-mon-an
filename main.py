@@ -142,16 +142,16 @@ class FixedDepthwiseConv2D(DepthwiseConv2D):
 
 # 2. Danh sách món ăn với giá cả và dinh dưỡng
 FOOD_DATA = {
-    "Ca hu kho": {"price": 15000, "calories": 124, "protein": 24},
-    "Canh cai": {"price": 5000, "calories": 56, "protein": 4},
-    "Canh chua": {"price": 7000, "calories": 112, "protein": 2.2},  
-    "Com trang": {"price": 3000, "calories": 130, "protein": 2.6},
-    "Dau hu sot": {"price": 10000, "calories": 120, "protein": 7},
-    "Ga chien": {"price": 15000, "calories": 246, "protein": 30},
-    "Rau muong xao": {"price": 5000, "calories": 12, "protein": 2.7, "fiber": 2.2},
-    "Thit kho trung": {"price": 15000, "calories": 315, "protein": 25},
-    "Trung chien": {"price": 5000, "calories": 135, "protein": 12},
-    "Xuc xich": {"price": 10000, "calories": 325, "protein": 18}
+    "Ca hu kho": {"price": 22000, "calories": 124, "protein": 24},
+    "Canh cai": {"price": 9000, "calories": 56, "protein": 4},
+    "Canh chua": {"price": 10000, "calories": 112, "protein": 2.2},  
+    "Com trang": {"price": 5000, "calories": 130, "protein": 2.6},
+    "Dau hu sot": {"price": 16000, "calories": 120, "protein": 7},
+    "Ga chien": {"price": 25000, "calories": 246, "protein": 30},
+    "Rau muong xao": {"price": 8000, "calories": 12, "protein": 2.7, "fiber": 2.2},
+    "Thit kho trung": {"price": 18000, "calories": 315, "protein": 25},
+    "Trung chien": {"price": 12000, "calories": 135, "protein": 12},
+    "Xuc xich": {"price": 12000, "calories": 325, "protein": 18}
 }
 
 # Thông tin thanh toán QR
