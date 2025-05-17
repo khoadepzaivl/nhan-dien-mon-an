@@ -1,5 +1,6 @@
 Download file exe chạy luôn tại đây:
 [![Download](https://img.shields.io/badge/Download-FoodDetector.exe-blue)](https://drive.google.com/uc?export=download&id=1bTljIaSiH-cBdLTIwrb38D2lkTEJELY4) 
+Code đặt cam mặc định là 1 nên phải kết nối camera mới chạy được exe
 
 ## Các Thư Viện Cần Cài Đặt
 
